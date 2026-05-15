@@ -8,11 +8,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
-def safety_banner(*, dry_run: bool, trading_enabled: bool, execute_enabled: bool) -> None:
+def safety_banner(*, dry_run: bool, trading_enabled: bool, execute_enabled: bool, paper_trading_enabled: bool) -> None:
     if trading_enabled and (not dry_run):
         st.error("LIVE TRADING ENABLED. Dashboard is read-only. Verify execution safety gates immediately.")
     else:
-        st.info(f"Safety: DRY_RUN={dry_run} | TRADING_ENABLED={trading_enabled} | EXECUTE_ENABLED={execute_enabled}")
+        st.info(
+            f"Safety: DRY_RUN={dry_run} | TRADING_ENABLED={trading_enabled} | EXECUTE_ENABLED={execute_enabled} | PAPER_TRADING={paper_trading_enabled}"
+        )
 
 
 def risk_gauge(label: str, value: float, *, min_value: float = 0.0, max_value: float = 1.0) -> None:

@@ -38,6 +38,10 @@ class Settings(BaseSettings):
         default=False,
         description="Allows the executor to run when invoked via CLI. Still gated by trading_enabled and confirmation.",
     )
+    paper_trading_enabled: bool = Field(
+        default=False,
+        description="When true, dry-run executions update the portfolio (cash/positions) as if filled, for paper trading in the dashboard.",
+    )
     live_confirm_phrase: str = Field(
         default="I_UNDERSTAND",
         description="Required phrase for interactive confirmation on first live run.",

@@ -125,9 +125,14 @@ class TradeExecutor:
                 if dry_run or not live_allowed:
                     trade = self._simulate_trade(sig, preview)
                     trades.append(trade)
-                    portfolio.apply_trade(trade)
+                    if self._settings.paper_trading_enabled:
+                        portfolio.apply_trade(trade)
                     orders_out.append({"signal": sig.model_dump(mode="json"), "dry_run": True, "preview": preview.__dict__})
-                    audit_event(self._settings, "order_simulated", {"cycle_id": cycle_id, "token_id": sig.token_id, "trade_id": trade.trade_id})
+                    audit_event(
+                        self._settings,
+                        "order_simulated",
+                        {"cycle_id": cycle_id, "token_id": sig.token_id, "trade_id": trade.trade_id, "paper_trading": bool(self._settings.paper_trading_enabled)},
+                    )
                     continue
 
                 audit_event(self._settings, "order_attempt", {"cycle_id": cycle_id, "order": order.model_dump(mode="json")})

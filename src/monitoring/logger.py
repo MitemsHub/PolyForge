@@ -16,6 +16,7 @@ class StartupBanner:
     dry_run: bool
     trading_enabled: bool
     execute_enabled: bool
+    paper_trading_enabled: bool
     wallet_mode: str
     log_json: bool
     log_dir: str
@@ -31,6 +32,7 @@ def emit_startup_banner(settings: Settings) -> StartupBanner:
         dry_run=settings.dry_run,
         trading_enabled=settings.trading_enabled,
         execute_enabled=settings.execute_enabled,
+        paper_trading_enabled=settings.paper_trading_enabled,
         wallet_mode=settings.wallet_mode,
         log_json=settings.log_json,
         log_dir=str(settings.log_dir),
@@ -43,6 +45,7 @@ def emit_startup_banner(settings: Settings) -> StartupBanner:
         dry_run=banner.dry_run,
         trading_enabled=banner.trading_enabled,
         execute_enabled=banner.execute_enabled,
+        paper_trading_enabled=banner.paper_trading_enabled,
         wallet_mode=banner.wallet_mode,
         log_json=banner.log_json,
         log_dir=banner.log_dir,

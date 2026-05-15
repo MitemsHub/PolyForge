@@ -130,7 +130,12 @@ def _read_recent_log_lines(log_dir: Path, limit: int = 400) -> list[str]:
 
 def _page_overview(settings: Any, db_path: Path) -> None:
     st.header("Overview")
-    safety_banner(dry_run=settings.dry_run, trading_enabled=settings.trading_enabled, execute_enabled=settings.execute_enabled)
+    safety_banner(
+        dry_run=settings.dry_run,
+        trading_enabled=settings.trading_enabled,
+        execute_enabled=settings.execute_enabled,
+        paper_trading_enabled=bool(getattr(settings, "paper_trading_enabled", False)),
+    )
 
     cycles = _recent_cycles_df(str(db_path))
     snaps = _portfolio_snapshots_df(str(db_path))
@@ -286,6 +291,7 @@ def _page_settings(settings: Any, db_path: Path) -> None:
             "dry_run": settings.dry_run,
             "trading_enabled": settings.trading_enabled,
             "execute_enabled": settings.execute_enabled,
+            "paper_trading_enabled": bool(getattr(settings, "paper_trading_enabled", False)),
             "llm_provider": settings.llm_provider,
             "enabled_strategies": settings.enabled_strategies,
             "dashboard_port": settings.dashboard_port,

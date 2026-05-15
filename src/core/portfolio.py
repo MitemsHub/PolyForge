@@ -193,6 +193,14 @@ class Portfolio:
             pos = Position(token_id=trade.token_id, size=Decimal("0"), avg_price=None, realized_pnl=Decimal("0"))
             self._state.positions.append(pos)
 
+        notional = trade.price * trade.size
+        cash = self._state.cash_balance or Decimal("0")
+        if trade.side == "buy":
+            cash = cash - notional - trade.fee
+        else:
+            cash = cash + notional - trade.fee
+        self._state.cash_balance = cash
+
         signed_qty = trade.size if trade.side == "buy" else -trade.size
         prev_qty = pos.size
         new_qty = prev_qty + signed_qty
