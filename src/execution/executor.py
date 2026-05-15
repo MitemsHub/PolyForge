@@ -278,21 +278,25 @@ class TradeExecutor:
         if spread is None:
             spread = Decimal("0")
 
-        slip = (mid * Decimal(str(self._settings.paper_slippage_bps)) / Decimal("10000")).copy_abs()
-        half_spread = (spread / Decimal("2")).copy_abs()
-
-        if preview.side == "buy":
-            fill_px = mid + half_spread + slip
-            if fill_px > preview.limit_price:
-                fill_px = Decimal("0")
+        has_book = best_bid is not None and best_ask is not None
+        if not has_book:
+            fill_px = preview.limit_price
         else:
-            fill_px = mid - half_spread - slip
-            if fill_px < preview.limit_price:
-                fill_px = Decimal("0")
+            slip = (mid * Decimal(str(self._settings.paper_slippage_bps)) / Decimal("10000")).copy_abs()
+            half_spread = (spread / Decimal("2")).copy_abs()
+
+            if preview.side == "buy":
+                fill_px = mid + half_spread + slip
+                if fill_px > preview.limit_price:
+                    fill_px = Decimal("0")
+            else:
+                fill_px = mid - half_spread - slip
+                if fill_px < preview.limit_price:
+                    fill_px = Decimal("0")
 
         requested = preview.size
         top_cap = ask_sz if preview.side == "buy" else bid_sz
-        cap = top_cap if top_cap is not None else requested
+        cap = top_cap if (top_cap is not None and has_book) else requested
         cap = max(Decimal("0"), cap)
 
         frac = 1.0
@@ -320,6 +324,7 @@ class TradeExecutor:
             raw={
                 "dry_run": True,
                 "paper_trading": bool(self._settings.paper_trading_enabled),
+                "used_order_book": bool(has_book),
                 "requested_size": str(requested),
                 "filled_size": str(filled),
                 "fill_fraction": float(frac),
