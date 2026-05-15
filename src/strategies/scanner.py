@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
+import json
 from loguru import logger
 
 from src.core.config import Settings
@@ -199,6 +200,25 @@ class MarketScanner:
                 return yes, no
 
         raw = market.raw or {}
+        for key in ("outcomePrices", "outcome_prices", "outcomePrice", "outcome_price"):
+            v = raw.get(key)
+            if v is None:
+                continue
+            if isinstance(v, list) and len(v) >= 2:
+                try:
+                    return Decimal(str(v[0])), Decimal(str(v[1]))
+                except Exception:
+                    pass
+            if isinstance(v, str):
+                s = v.strip()
+                if s.startswith("["):
+                    try:
+                        parsed = json.loads(s)
+                        if isinstance(parsed, list) and len(parsed) >= 2:
+                            return Decimal(str(parsed[0])), Decimal(str(parsed[1]))
+                    except Exception:
+                        pass
+
         for key_yes, key_no in (("yesPrice", "noPrice"), ("yes_price", "no_price")):
             if key_yes in raw and key_no in raw:
                 try:
