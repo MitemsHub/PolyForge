@@ -413,6 +413,15 @@ class Orchestrator:
 
     def _persist_portfolio_snapshot(self, cycle_id: str, ts: datetime) -> None:
         try:
+            if self._settings.paper_trading_enabled and self._settings.paper_use_live_mid_prices and self._clob is not None:
+                try:
+                    for p in (self._portfolio.get_state().positions or []):
+                        mp = self._clob.get_mid_price(p.token_id)
+                        if mp is not None:
+                            self._portfolio.update_mark_price(p.token_id, mp)
+                except Exception:
+                    pass
+
             equity = self._portfolio.compute_equity()
             exposure = self._portfolio.get_exposure_snapshot().total_value
             state = self._portfolio.get_state()

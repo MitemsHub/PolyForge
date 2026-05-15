@@ -42,6 +42,24 @@ class Settings(BaseSettings):
         default=False,
         description="When true, dry-run executions update the portfolio (cash/positions) as if filled, for paper trading in the dashboard.",
     )
+    paper_use_live_mid_prices: bool = Field(
+        default=True,
+        description="When paper trading, refresh mark prices using live mid prices from the CLOB order book when available.",
+    )
+    paper_slippage_bps: int = Field(
+        default=10,
+        ge=0,
+        le=10_000,
+        description="Additional adverse slippage applied to simulated fills (bps of mid).",
+    )
+    paper_partial_fill_probability: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        description="Probability that a simulated fill is partial (uses paper_partial_fill_min/max).",
+    )
+    paper_partial_fill_min: float = Field(default=0.25, ge=0.0, le=1.0)
+    paper_partial_fill_max: float = Field(default=1.0, ge=0.0, le=1.0)
     live_confirm_phrase: str = Field(
         default="I_UNDERSTAND",
         description="Required phrase for interactive confirmation on first live run.",
@@ -262,6 +280,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _safety_checks(self) -> "Settings":
+        if self.paper_partial_fill_min > self.paper_partial_fill_max:
+            raise ValueError("POLYFORGE_PAPER_PARTIAL_FILL_MIN must be <= POLYFORGE_PAPER_PARTIAL_FILL_MAX")
+
         if self.apply_preset:
             vals = _preset_values(self.preset)
             for k, v in vals.items():

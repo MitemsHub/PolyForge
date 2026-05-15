@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
+import random
 
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
@@ -91,7 +92,7 @@ class TradeExecutor:
                     orders_out.append({"signal": sig.model_dump(mode="json"), "skipped": True, "reason": "size_zero"})
                     continue
 
-                preview, order, extra = self.build_order_from_signal(sig, size=size)
+                preview, order, extra, order_book = self.build_order_from_signal(sig, size=size)
                 log_order_preview(preview)
                 audit_event(
                     self._settings,
@@ -123,11 +124,20 @@ class TradeExecutor:
                 agent_decision.planned_orders.append(order)
 
                 if dry_run or not live_allowed:
-                    trade = self._simulate_trade(sig, preview)
-                    trades.append(trade)
-                    if self._settings.paper_trading_enabled:
-                        portfolio.apply_trade(trade)
-                    orders_out.append({"signal": sig.model_dump(mode="json"), "dry_run": True, "preview": preview.__dict__})
+                    trade = self._simulate_trade(sig, preview, order_book=order_book)
+                    if trade.size > 0:
+                        trades.append(trade)
+                        if self._settings.paper_trading_enabled:
+                            portfolio.apply_trade(trade)
+                            if self._settings.paper_use_live_mid_prices and trade.raw.get("mid_price") is not None:
+                                try:
+                                    portfolio.update_mark_price(sig.token_id, Decimal(str(trade.raw["mid_price"])))
+                                except Exception:
+                                    pass
+                        orders_out.append({"signal": sig.model_dump(mode="json"), "dry_run": True, "preview": preview.__dict__, "paper_fill": trade.raw})
+                    else:
+                        skipped += 1
+                        orders_out.append({"signal": sig.model_dump(mode="json"), "dry_run": True, "preview": preview.__dict__, "skipped": True, "reason": "no_fill"})
                     audit_event(
                         self._settings,
                         "order_simulated",
@@ -156,7 +166,7 @@ class TradeExecutor:
             trades=trades,
         )
 
-    def build_order_from_signal(self, signal: TradeSignal, *, size: Decimal) -> tuple[OrderPreview, Order, dict[str, Any]]:
+    def build_order_from_signal(self, signal: TradeSignal, *, size: Decimal) -> tuple[OrderPreview, Order, dict[str, Any], dict[str, Any] | None]:
         market_raw: dict[str, Any] = {}
         if signal.market_id:
             try:
@@ -186,7 +196,7 @@ class TradeExecutor:
         extra: dict[str, Any] = {"post_only": preview.post_only}
         if neg_risk is not None:
             extra["neg_risk"] = neg_risk
-        return preview, order, extra
+        return preview, order, extra, order_book
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(initial=0.5, max=3))
     def place_order(self, order: Order, *, extra_kwargs: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -246,17 +256,79 @@ class TradeExecutor:
         portfolio.set_meta("live_confirmed", "true")
         return True
 
-    def _simulate_trade(self, signal: TradeSignal, preview: OrderPreview) -> Trade:
+    def _simulate_trade(self, signal: TradeSignal, preview: OrderPreview, *, order_book: dict[str, Any] | None) -> Trade:
+        rng = random.Random(f"{signal.market_id}:{signal.token_id}:{preview.side}:{datetime.now(timezone.utc).isoformat()}")
+
+        bids = ((order_book or {}).get("bids") or []) if isinstance(order_book, dict) else []
+        asks = ((order_book or {}).get("asks") or []) if isinstance(order_book, dict) else []
+
+        best_bid = Decimal(str(bids[0]["price"])) if bids else None
+        best_ask = Decimal(str(asks[0]["price"])) if asks else None
+        bid_sz = Decimal(str(bids[0]["size"])) if bids else None
+        ask_sz = Decimal(str(asks[0]["size"])) if asks else None
+
+        mid: Decimal | None = None
+        spread: Decimal | None = None
+        if best_bid is not None and best_ask is not None:
+            mid = (best_bid + best_ask) / Decimal("2")
+            spread = best_ask - best_bid
+
+        if mid is None:
+            mid = preview.limit_price
+        if spread is None:
+            spread = Decimal("0")
+
+        slip = (mid * Decimal(str(self._settings.paper_slippage_bps)) / Decimal("10000")).copy_abs()
+        half_spread = (spread / Decimal("2")).copy_abs()
+
+        if preview.side == "buy":
+            fill_px = mid + half_spread + slip
+            if fill_px > preview.limit_price:
+                fill_px = Decimal("0")
+        else:
+            fill_px = mid - half_spread - slip
+            if fill_px < preview.limit_price:
+                fill_px = Decimal("0")
+
+        requested = preview.size
+        top_cap = ask_sz if preview.side == "buy" else bid_sz
+        cap = top_cap if top_cap is not None else requested
+        cap = max(Decimal("0"), cap)
+
+        frac = 1.0
+        if rng.random() < float(self._settings.paper_partial_fill_probability):
+            lo = float(self._settings.paper_partial_fill_min)
+            hi = float(self._settings.paper_partial_fill_max)
+            frac = max(0.0, min(1.0, rng.uniform(lo, hi)))
+
+        filled = min(requested * Decimal(str(frac)), cap) if fill_px > 0 else Decimal("0")
+        filled = max(Decimal("0"), filled)
+
+        notional = fill_px * filled
         fee_rate = Decimal(str(self._settings.fees_bps)) / Decimal("10000")
-        fee = preview.estimated_notional_usd * fee_rate
+        fee = notional * fee_rate
+
         return Trade(
             trade_id=f"dryrun:{uuid.uuid4()}",
             market_id=signal.market_id,
             token_id=signal.token_id,
             side=signal.side,
-            price=preview.limit_price,
-            size=preview.size,
+            price=fill_px,
+            size=filled,
             fee=fee,
             timestamp=datetime.now(timezone.utc),
-            raw={"dry_run": True, "edge_type": signal.edge_type, "rationale": signal.rationale},
+            raw={
+                "dry_run": True,
+                "paper_trading": bool(self._settings.paper_trading_enabled),
+                "requested_size": str(requested),
+                "filled_size": str(filled),
+                "fill_fraction": float(frac),
+                "mid_price": str(mid),
+                "best_bid": str(best_bid) if best_bid is not None else None,
+                "best_ask": str(best_ask) if best_ask is not None else None,
+                "paper_slippage_bps": int(self._settings.paper_slippage_bps),
+                "fees_bps": int(self._settings.fees_bps),
+                "edge_type": signal.edge_type,
+                "rationale": signal.rationale,
+            },
         )
