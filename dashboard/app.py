@@ -25,17 +25,51 @@ def _autorefresh(seconds: int) -> None:
         fn(interval=seconds * 1000, key="polyforge_autorefresh")
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+def _try_parse_json(value: Any) -> Any | None:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode("utf-8", errors="ignore")
+        except Exception:
+            return None
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    if not (s.startswith("{") or s.startswith("[")):
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+
+def _render_jsonish(value: Any) -> None:
+    parsed = _try_parse_json(value)
+    if parsed is not None:
+        st.json(parsed)
+        return
+    if value is None:
+        st.write("None")
+        return
+    st.code(str(value)[:8000])
+
+
+@st.cache_data(ttl=5, show_spinner=False)
 def _recent_cycles_df(db_path: str) -> pd.DataFrame:
     return DashboardStore(Path(db_path)).get_recent_cycles(limit=300)
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def _portfolio_snapshots_df(db_path: str) -> pd.DataFrame:
     return DashboardStore(Path(db_path)).get_portfolio_snapshots(limit=5000)
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def _positions_df(db_path: str) -> pd.DataFrame:
     store = DashboardStore(Path(db_path))
     return store.query_df(
@@ -48,17 +82,17 @@ def _positions_df(db_path: str) -> pd.DataFrame:
     )
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def _cycle_signals_df(db_path: str, cycle_id: str) -> pd.DataFrame:
     return DashboardStore(Path(db_path)).get_cycle_signals(cycle_id, limit=500)
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def _agent_messages_df(db_path: str, cycle_id: str) -> pd.DataFrame:
     return DashboardStore(Path(db_path)).get_agent_messages(cycle_id, limit=200)
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def _agent_decision_raw(db_path: str, cycle_id: str) -> dict[str, Any]:
     return DashboardStore(Path(db_path)).get_agent_decision(cycle_id)
 
@@ -101,6 +135,11 @@ def _page_overview(settings: Any, db_path: Path) -> None:
     cycles = _recent_cycles_df(str(db_path))
     snaps = _portfolio_snapshots_df(str(db_path))
     positions = _positions_df(str(db_path))
+    cid = _latest_cycle_id(cycles)
+    decision_raw = _agent_decision_raw(str(db_path), cid) if cid else {"decision": None, "execution_report": None}
+    decision = _try_parse_json(decision_raw.get("decision")) or {}
+    planned_orders = decision.get("planned_orders") if isinstance(decision, dict) else None
+    planned_order_count = len(planned_orders) if isinstance(planned_orders, list) else 0
 
     c1, c2, c3, c4 = st.columns(4)
     last_equity = float(snaps.iloc[-1]["equity"]) if not snaps.empty else 0.0
@@ -110,7 +149,16 @@ def _page_overview(settings: Any, db_path: Path) -> None:
     c1.metric("Equity", f"${last_equity:,.2f}")
     c2.metric("Cash", f"${last_cash:,.2f}")
     c3.metric("Gross Exposure", f"${last_exposure:,.2f}")
-    c4.metric("Cycles (recent)", f"{cycle_count}")
+    c4.metric("Cycles (recent)", f"{cycle_count}", help="These are cycles written to DuckDB. Equity/cash remain flat in dry-run unless paper trading is enabled.")
+
+    c5, c6, c7, c8 = st.columns(4)
+    last_cycle_ts = str(cycles.iloc[0].get("started_at")) if not cycles.empty else "n/a"
+    last_cycle_mode = str(cycles.iloc[0].get("mode")) if not cycles.empty else "n/a"
+    last_cycle_exec = str(cycles.iloc[0].get("execute")) if not cycles.empty else "n/a"
+    c5.metric("Latest cycle_id", str(cid) if cid else "n/a")
+    c6.metric("Latest started_at", last_cycle_ts)
+    c7.metric("Mode", last_cycle_mode)
+    c8.metric("Planned orders", f"{planned_order_count}")
 
     if not snaps.empty:
         snaps2 = snaps.copy()
@@ -189,30 +237,29 @@ def _page_agents(settings: Any, db_path: Path) -> None:
 
     decision_raw = _agent_decision_raw(str(db_path), cid)
     msgs_df = _agent_messages_df(str(db_path), cid)
+    sig_df = _cycle_signals_df(str(db_path), cid)
+    decision = _try_parse_json(decision_raw.get("decision")) or {}
+    approved = bool(decision.get("approved")) if isinstance(decision, dict) else False
+    planned_orders = decision.get("planned_orders") if isinstance(decision, dict) else None
+    planned_order_count = len(planned_orders) if isinstance(planned_orders, list) else 0
 
-    c1, c2 = st.columns(2)
-    with c1:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Cycle", str(cid))
+    c2.metric("Signals", f"{int(sig_df.shape[0])}")
+    c3.metric("Approved", "yes" if approved else "no")
+    c4.metric("Planned orders", f"{planned_order_count}")
+
+    c5, c6 = st.columns(2)
+    with c5:
         risk_gauge("High-confidence threshold", float(settings.alert_on_high_confidence_threshold))
-    with c2:
+    with c6:
         risk_gauge("Dry-run", 1.0 if settings.dry_run else 0.0)
 
     st.subheader("Latest Decision")
-    if decision_raw.get("decision"):
-        try:
-            st.json(json.loads(decision_raw["decision"]))
-        except Exception:
-            st.code(str(decision_raw["decision"]))
-    else:
-        st.write("No decision recorded.")
+    _render_jsonish(decision_raw.get("decision"))
 
     st.subheader("Latest Execution Report")
-    if decision_raw.get("execution_report"):
-        try:
-            st.json(json.loads(decision_raw["execution_report"]))
-        except Exception:
-            st.code(str(decision_raw["execution_report"]))
-    else:
-        st.write("No execution report recorded.")
+    _render_jsonish(decision_raw.get("execution_report"))
 
     st.subheader("Reasoning Chain")
     if msgs_df.empty:
@@ -220,7 +267,7 @@ def _page_agents(settings: Any, db_path: Path) -> None:
     else:
         for _, r in msgs_df.iterrows():
             st.markdown(f"**{r.get('role')}**")
-            st.code(str(r.get("content", ""))[:6000])
+            _render_jsonish(r.get("content", ""))
 
 
 def _page_logs(settings: Any) -> None:
@@ -254,6 +301,14 @@ def main() -> None:
     db_path = store.db_path
 
     st.set_page_config(page_title="PolyForge Dashboard", layout="wide", initial_sidebar_state="expanded")
+    st.markdown(
+        """
+        <style>
+        [data-testid="stDeployButton"] { display: none !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     _autorefresh(int(settings.dashboard_auto_refresh_seconds))
 
     st.sidebar.title("PolyForge")
@@ -285,4 +340,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -185,6 +185,13 @@ class Orchestrator:
             self._portfolio.register_token(s.token_id, s.market_id, s.category)
             if s.suggested_price is not None:
                 self._portfolio.update_mark_price(s.token_id, s.suggested_price)
+            elif self._clob is not None:
+                try:
+                    mp = self._clob.get_mid_price(s.token_id)
+                    if mp is not None:
+                        self._portfolio.update_mark_price(s.token_id, mp)
+                except Exception:
+                    pass
 
         top = select_top_signals(signals, limit=10)
         hi = filter_signals_by_confidence(signals, self._settings.alert_on_high_confidence_threshold)
@@ -202,7 +209,7 @@ class Orchestrator:
             init_state: GraphState = {
                 "messages": [],
                 "market_context": {"timestamp": started.isoformat(), "signal_count": len(signals)},
-                "signals": signals[:50],
+                "signals": select_top_signals(signals, limit=50),
                 "portfolio": self._portfolio.get_state(),
                 "decisions": [],
                 "research_data": {},

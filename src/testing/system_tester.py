@@ -11,6 +11,7 @@ from src.agents.state import GraphState
 from src.agents.tools import AgentToolbox
 from src.core.config import Settings
 from src.core.models import AgentDecision, Market, TradeSignal
+from src.core.utils import select_top_signals
 from src.core.portfolio import Portfolio
 from src.execution.executor import TradeExecutor
 from src.risk.risk_engine import RiskEngine
@@ -60,10 +61,13 @@ class FakeClob:
         self._order_books = order_books or {}
 
     def get_order_book(self, token_id: str) -> dict[str, Any]:
-        return self._order_books.get(
-            token_id,
-            {"bids": [{"price": "0.49", "size": "100"}], "asks": [{"price": "0.51", "size": "100"}]},
-        )
+        if token_id in self._order_books:
+            return self._order_books[token_id]
+        if str(token_id).endswith("1"):
+            return {"bids": [{"price": "0.47", "size": "100"}], "asks": [{"price": "0.49", "size": "100"}]}
+        if str(token_id).endswith("2"):
+            return {"bids": [{"price": "0.51", "size": "100"}], "asks": [{"price": "0.53", "size": "100"}]}
+        return {"bids": [{"price": "0.49", "size": "100"}], "asks": [{"price": "0.51", "size": "100"}]}
 
     def get_mid_price(self, token_id: str) -> Decimal | None:
         book = self.get_order_book(token_id)
@@ -143,7 +147,7 @@ def run_dry_run_system_test(settings: Settings, *, cycles: int = 3) -> SystemTes
             init_state: GraphState = {
                 "messages": [],
                 "market_context": {"timestamp": datetime.now(timezone.utc).isoformat(), "cycle_idx": i},
-                "signals": signals[:50],
+                "signals": select_top_signals(signals, limit=50),
                 "portfolio": portfolio.get_state(),
                 "decisions": [],
                 "research_data": {},
@@ -169,4 +173,3 @@ def run_dry_run_system_test(settings: Settings, *, cycles: int = 3) -> SystemTes
     portfolio.close()
     ok = len(errors) == 0
     return SystemTestResult(ok=ok, cycles=int(cycles), signal_counts=signal_counts, approved_counts=approved_counts, errors=errors)
-

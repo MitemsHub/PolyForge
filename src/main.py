@@ -26,6 +26,7 @@ from src.monitoring.healthcheck import as_json as healthcheck_json
 from src.monitoring.healthcheck import run_healthcheck
 from src.monitoring.logger import emit_startup_banner
 from src.orchestration.scheduler import PolyForgeScheduler
+from src.core.utils import select_top_signals
 from src.risk.risk_engine import RiskEngine
 from src.security.audit_logger import audit_event, get_audit_logger
 from src.security.secrets_manager import fingerprint_settings
@@ -113,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if res.ok else 2
 
     if settings.trading_enabled and settings.dry_run:
-        logger.warning("Trading enabled but DRY_RUN is true: execution is blocked.")
+        logger.warning("Trading enabled but DRY_RUN is true: live order placement is blocked (simulation is allowed).")
     if settings.trading_enabled and not settings.dry_run:
         logger.warning("Trading enabled and DRY_RUN is false. Ensure POLYFORGE_EXECUTE_ENABLED is only enabled intentionally.")
 
@@ -155,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.backtest or args.optimize:
-        from datetime import timezone, timedelta
+        from datetime import timedelta
 
         from src.backtesting.advanced_backtester import AdvancedBacktester
         from src.backtesting.optimizer import StrategyOptimizer
@@ -333,11 +334,18 @@ def main(argv: list[str] | None = None) -> int:
             portfolio.register_token(sig.token_id, sig.market_id, sig.category)
             if sig.suggested_price is not None:
                 portfolio.update_mark_price(sig.token_id, sig.suggested_price)
+            elif clob is not None:
+                try:
+                    mp = clob.get_mid_price(sig.token_id)
+                    if mp is not None:
+                        portfolio.update_mark_price(sig.token_id, mp)
+                except Exception:
+                    pass
 
         initial_state: GraphState = {
             "messages": [],
             "market_context": {"timestamp": datetime.now(timezone.utc).isoformat(), "signal_count": len(signals)},
-            "signals": signals[:50],
+            "signals": select_top_signals(signals, limit=50),
             "portfolio": portfolio.get_state(),
             "decisions": [],
             "research_data": {},
