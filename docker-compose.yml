@@ -1,0 +1,50 @@
+services:
+  polyforge:
+    build: .
+    image: polyforge:latest
+    environment:
+      POLYFORGE_ENV: ${POLYFORGE_ENV:-prod}
+      POLYFORGE_LOG_JSON: ${POLYFORGE_LOG_JSON:-true}
+      POLYFORGE_LOG_DIR: /app/logs
+      POLYFORGE_REPORTS_DIR: /app/reports
+      POLYFORGE_AUDIT_LOG_PATH: /app/data/audit/audit.jsonl
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    ports:
+      - "${POLYFORGE_DASHBOARD_PORT:-8501}:8501"
+    command: ["python", "-m", "src.main", "--run-forever", "--dashboard"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.main", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["infra"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-polyforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-polyforge}
+      POSTGRES_DB: ${POSTGRES_DB:-polyforge}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["infra"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
