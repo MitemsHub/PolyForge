@@ -61,6 +61,12 @@ def _build_parser() -> ArgumentParser:
     p.add_argument("--full-check", action="store_true", help="Run pre-launch validation checklist and exit.")
     p.add_argument("--test-system", action="store_true", help="Run an end-to-end dry-run system test and exit.")
     p.add_argument("--test-cycles", default=3, type=int, help="Number of cycles for --test-system.")
+    p.add_argument(
+        "--paper-demo-cycles",
+        default=0,
+        type=int,
+        help="Run N cycles back-to-back (useful for paper trading demos). Use with --dashboard to watch metrics move.",
+    )
     return p
 
 
@@ -113,6 +119,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(res.__dict__, indent=2, default=str))
         return 0 if res.ok else 2
 
+    demo_thread: threading.Thread | None = None
+    if int(args.paper_demo_cycles) > 0:
+        from src.orchestration.orchestrator import run_once
+
+        async def _run_demo() -> None:
+            for _ in range(int(args.paper_demo_cycles)):
+                await run_once(settings, execute=True)
+
+        def _demo_runner() -> None:
+            asyncio.run(_run_demo())
+
+        demo_thread = threading.Thread(target=_demo_runner, name="polyforge-paper-demo", daemon=True)
+        demo_thread.start()
+
     if settings.trading_enabled and settings.dry_run:
         logger.warning("Trading enabled but DRY_RUN is true: live order placement is blocked (simulation is allowed).")
     if settings.trading_enabled and not settings.dry_run:
@@ -134,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         proc = launch_dashboard(
             settings,
             project_root=Path(__file__).resolve().parents[1],
-            use_snapshot_db=bool(args.run_forever),
+            use_snapshot_db=bool(args.run_forever or (int(args.paper_demo_cycles) > 0)),
         )
         try:
             proc.wait()

@@ -334,7 +334,18 @@ class Orchestrator:
         try:
             self._db.execute(f"ATTACH '{snap_sql}' AS dash;")
             attached = True
-            for tbl in ("cycle_runs", "cycle_signals", "agent_messages", "agent_decisions", "portfolio_snapshots"):
+            for tbl in (
+                "cycle_runs",
+                "cycle_signals",
+                "agent_messages",
+                "agent_decisions",
+                "portfolio_snapshots",
+                "positions",
+                "trades",
+                "token_registry",
+                "portfolio_meta",
+                "daily_equity",
+            ):
                 self._db.execute(f"CREATE OR REPLACE TABLE dash.{tbl} AS SELECT * FROM main.{tbl};")
         finally:
             if attached:
